@@ -1,6 +1,6 @@
 ---
-name: converting-legacy-js-to-ts
-description: Use when converting legacy JavaScript to TypeScript in Vue/Nuxt projects — .js files, composables, stores, helpers, or .vue components using <script setup> without lang="ts". Triggers include "convert to TS", "migrate to TypeScript", "add types", "make this script setup lang ts", or any JS→TS migration task.
+name: skill-converting-legacy-js-to-ts
+description: JS→TS migration in Vue/Nuxt — .vue components, composables, stores, helpers. Triggers: "convert to TS", "add types", "migrate to TypeScript", any JS→TS task.
 ---
 
 # Converting Legacy JS to TypeScript (Vue/Nuxt)
