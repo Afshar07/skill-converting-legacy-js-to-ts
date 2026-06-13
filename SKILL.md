@@ -7,7 +7,7 @@ description: Use when converting legacy JavaScript to TypeScript in Vue/Nuxt pro
 
 ## Overview
 
-A conversion is a type-annotation pass, not a refactor. The converted file must be a drop-in replacement: every call site, template usage, and event listener keeps working with zero changes. **Backward compatibility is absolute.**
+A conversion is a type-annotation pass, not a refactor. The converted file must be a drop-in replacement. **Backward compatibility is absolute.**
 
 ## Iron Rules
 
@@ -15,33 +15,32 @@ A conversion is a type-annotation pass, not a refactor. The converted file must 
 2. **Grep every usage before touching anything.** Types come from real call sites, not guesses. If callers pass arrays to a `rules` prop you assumed was a string, the type is `string | string[]`.
 3. **Internal symbols → camelCase.** Locals, computeds, and functions used only inside this file. The file's own template counts as inside — update it in the same edit. Rename only with grep proof of zero external usage.
 4. **Public surface — two regimes.**
-   - **Components (`.vue`)**: props, emits, slots, and `defineExpose` keep their existing names, period — including snake_case ones. Rename only when the user explicitly requests it (then update every call site in the same pass). The ONLY free spelling equivalence is camelCase ↔ kebab-case in templates. **Vue does NOT map snake_case to camelCase** — renaming `is_icon_reversed` to `isIconReversed` silently breaks every `:is_icon_reversed` call site. Don't ask, don't suggest mid-conversion: keep the name and list it in the report.
-   - **JS/TS modules**: exported functions MAY be renamed to camelCase, but only via the dual-export alias bridge — `export { newCamelName as old_snake_name, newCamelName }` — so every existing import keeps working. Never drop the old name. Signature changes (parameters added, removed, reordered, or made optional) are not covered by the bridge and still require asking the user.
+   - **Components (`.vue`)**: props, emits, slots, and `defineExpose` keep existing names including snake_case — Vue does NOT map snake_case→camelCase. The only free equivalence is camelCase ↔ kebab-case in templates. List snake_case names in the report; rename only when the user explicitly asks.
+   - **JS/TS modules**: exported functions may be renamed to camelCase via the dual-export alias bridge — `export { newCamelName as old_snake_name, newCamelName }`. Never drop the old name. Signature changes always require asking.
 5. **No new `any`.** Derive from usage; use `unknown` + narrowing when genuinely unknowable; ask when stuck. Never paper over an untyped local JS dependency with a type assertion — that is fake safety. Convert the leaf helper first. Exception: a narrow cast *inside* a converted generic helper that reads dynamic keys (where the value's type is contractually tied to a parameter, e.g. a default value) is acceptable — keep such casts confined to that helper and note them in the report.
 6. **Structure stays.** A `computed` stays a `computed`. No converting reactive code to module constants, no extracting helpers, no arrow-body shorthand "cleanup", no template churn (attribute reordering, self-closing tags, removing "no-op" code or blank lines). File layout is NOT structure: when consumers import through a barrel (`index.ts`), moving a function to another file is invisible to them and is the approved way to migrate large modules (see "Migrating large JS modules").
 7. **Bugs get reported, not fixed.** Latent bugs, dead props, falsy-default traps: note them in your final report. Fixing changes behavior — out of scope.
 
 ## Procedure
 
-1. **House style**: read `.ai/conventions.md` if the repo has one; otherwise open 2 already-converted files in the same repo and match them (e.g. `interface IProps`, auto-imported `computed`).
-2. **Map public surface** (Rule 1) and **grep all usages** (Rule 2). Record what you found — you'll cite it as proof.
-3. **Dependency check**: if the file imports untyped local `.js` helpers whose return types you would have to assert, convert those leaf files first (same rules, recursively) or stop and report the dependency.
+1. **House style**: read `.ai/conventions.md` if present; otherwise match 2 already-converted files in the repo.
+2. **Map public surface** (Rule 1) + **grep all usages** (Rule 2). Record findings — you'll cite them as proof.
+3. **Dependency check**: untyped local `.js` helpers must be converted first (leaf-up). Never assert over them.
 4. **Convert mechanically**:
    - `interface IProps` + `defineProps<IProps>()` + `withDefaults()` — preserve every default exactly.
    - `interface IEmits` + `defineEmits<IEmits>()`.
    - String-literal unions only where usage/lookup tables prove the full value set.
-   - Type-only exports may be added (they are additive and erased at runtime).
-   - Naming: `I` prefix for interfaces, `T` for type aliases, `E` for enums. API shapes follow `I<Verb><Thing>Payload` / `I<Verb><Thing>Response`. When migrating modules, types go in a sibling `.types.ts`, not mixed into the implementation file.
-5. **Rename internals to camelCase** (Rule 3), including their uses in this file's template.
-6. **STOP and ask the user**, listing each item with its usage evidence, when:
-   - a component's public API would change for any reason (component naming changes only ever happen when the user asks for them)
-   - a module export's *signature* would change (the alias bridge covers renames, never signatures)
-   - anything in a published package (e.g. ui-layer) would change its API
-7. **Verify** (file-level):
-   - run the typecheck (`npx nuxi typecheck` or `vue-tsc --noEmit`) and read its output — inspection is never verification. In repos full of pre-existing errors you are accountable for one thing: zero errors in the files you touched.
-   - re-grep all usages and confirm each still matches the API exactly
-   - when renaming `.js` → `.ts`: grep for import specifiers with an explicit `.js` extension. Removing that `.js` from the specifier is the ONLY edit allowed in other files — nothing else on the line changes, and every such edit is listed in the report.
-8. **Report**: what was converted, internal renames made (with grep proof), open questions, bugs noticed but not touched.
+   - Naming: `I` prefix for interfaces, `T` for aliases, `E` for enums. API shapes: `I<Verb><Thing>Payload` / `I<Verb><Thing>Response`. Types go in a sibling `.types.ts`.
+5. **Rename internals to camelCase** (Rule 3), including this file's template.
+6. **STOP and ask**, listing each item with usage evidence, when:
+   - a component's public API would change for any reason
+   - a module export's *signature* would change
+   - anything in a published package would change its API
+7. **Verify**:
+   - run `npx nuxi typecheck` or `vue-tsc --noEmit` — you are accountable for zero new errors in files you touched.
+   - re-grep all usages and confirm each still matches the API.
+   - for `.js` → `.ts` renames: grep import specifiers with explicit `.js` extension; removing `.js` from the specifier is the ONLY allowed edit in other files. List every such edit in the report.
+8. **Report**: what was converted, internal renames (with grep proof), open questions, bugs noticed but not fixed.
 
 ## Core Pattern
 
@@ -65,19 +64,10 @@ const props = withDefaults(defineProps<IProps>(), {
 
 ## Migrating large JS modules (gradual extraction)
 
-A large legacy module (hundreds of lines, many exports) is never converted in one pass. Drain it function-by-function:
+Drain function-by-function — never convert in one pass:
 
-1. **Barrel first.** Ensure all consumers import a folder path whose `index.ts` re-exports every file. If consumers import the `.js` file directly, create the folder + barrel and fix those specifiers first — after that, file boundaries are invisible to call sites.
-2. **Staging sibling.** Create `<module>.new.ts` next to the legacy `.js` with this header:
-   ```ts
-   /**
-    * Gradual migration from JS to TS.
-    * Each migrated function is REMOVED from the original .js and
-    * reimplemented here fully typed, then exported twice:
-    * once as the new camelCase name, once as the old name alias,
-    * so call sites stay backward compatible.
-    */
-   ```
+1. **Barrel first.** All consumers must import through a folder `index.ts`. If they import the `.js` directly, create the barrel + fix specifiers first.
+2. **Staging sibling.** Create `<module>.new.ts` next to the `.js` with a brief migration header comment.
 3. **Per function:** delete from `.js`, reimplement typed in `.new.ts`, dual-export:
    ```ts
    function addMemberToAccelerator(
@@ -85,25 +75,19 @@ A large legacy module (hundreds of lines, many exports) is never converted in on
    ): Promise<AxiosResponse<IApiResponse<ICreatedAcceleratorMember>>> {
      return axios_post(ROUTE_ACCELERATOR_ADD, payload);
    }
-
    export { addMemberToAccelerator as store_accelerator_by_root_accelerator, addMemberToAccelerator };
    ```
-4. **End state.** When the `.js` is empty, domain folders each contain `x.api.ts` + `x.types.ts` + `index.ts` (barrel). The top-level `index.ts` re-exports all of them.
-5. **Verify each move.** Typecheck, plus grep proving BOTH the old and new name still resolve from the consumer-facing barrel import path.
+4. **End state.** When `.js` is empty: domain folders each contain `x.api.ts` + `x.types.ts` + `index.ts`. Top-level `index.ts` re-exports all.
+5. **Verify each move.** Typecheck + grep proving both old and new name resolve from the barrel.
 
 ## Canonical pattern: dynamic-key prop readers
-
-Helpers that read arbitrary keys off a props object use exactly this shape — no variations:
 
 ```ts
 import { computed } from "vue";
 import type { ComputedRef } from "vue";
 
-// props typed as `object`, not `Record<string, unknown>`:
-// typed defineProps<IProps>() objects have no index signature,
-// so Record<string, unknown> would reject them at typed call sites.
-// The two casts are the Rule 5 exception — confined here, value's
-// type is contractually tied to the defaultValue parameter.
+// props: `object` not `Record<string, unknown>` — typed defineProps<IProps>() has no index signature.
+// The two casts are the Rule 5 exception: confined here, type tied to defaultValue.
 const computedProp = <T>(props: object, key: string, defaultValue: T): ComputedRef<T> => {
   return computed(() => {
     const source = props as Record<string, unknown> & { input?: Record<string, unknown> };
@@ -130,14 +114,14 @@ const computedProp = <T>(props: object, key: string, defaultValue: T): ComputedR
 
 | Excuse | Reality |
 |---|---|
-| "These maps never change, module constants are cleaner" | That's a refactor. Conversion adds types only. |
-| "It's a no-op class / dead line, removing it is safe" | Churn buries the real diff. Leave it, note it. |
+| "Module constants are cleaner here" | That's a refactor. Types only. |
+| "It's dead code, removing it is safe" | Churn buries the diff. Leave it, note it. |
 | "The param is unused, I'll make it optional" | Signatures are public API. Ask. |
-| "Worth normalizing snake_case while we're here" | Vue does NOT map snake_case→camelCase. Ask, always. |
+| "Worth normalizing snake_case while we're here" | Vue does NOT map snake_case→camelCase. Ask. |
 | "This restructuring fixes a latent TS error" | Type what exists. If it can't be typed as-is, ask. |
-| "The helper is untyped, I'll assert its return type" | Unchecked assertion = fake safety. Convert the leaf first. |
-| "Zero usages, so renaming the prop is harmless" | Component props keep their names unless the user says otherwise. |
-| "I'll rename the module export, callers can update" | Never. Use the dual-export bridge — old name stays. |
+| "The helper is untyped, I'll assert its return type" | Fake safety. Convert the leaf first. |
+| "Zero usages, renaming the prop is harmless" | Props keep their names unless the user says so. |
+| "I'll rename the export, callers can update" | Never. Use the dual-export bridge. |
 
 ## Red Flags — stop and re-check the rules
 
