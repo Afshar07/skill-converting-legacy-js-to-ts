@@ -63,14 +63,64 @@ const props = withDefaults(defineProps<IProps>(), {
 });
 ```
 
+## Migrating large JS modules (gradual extraction)
+
+A large legacy module (hundreds of lines, many exports) is never converted in one pass. Drain it function-by-function:
+
+1. **Barrel first.** Ensure all consumers import a folder path whose `index.ts` re-exports every file. If consumers import the `.js` file directly, create the folder + barrel and fix those specifiers first — after that, file boundaries are invisible to call sites.
+2. **Staging sibling.** Create `<module>.new.ts` next to the legacy `.js` with this header:
+   ```ts
+   /**
+    * Gradual migration from JS to TS.
+    * Each migrated function is REMOVED from the original .js and
+    * reimplemented here fully typed, then exported twice:
+    * once as the new camelCase name, once as the old name alias,
+    * so call sites stay backward compatible.
+    */
+   ```
+3. **Per function:** delete from `.js`, reimplement typed in `.new.ts`, dual-export:
+   ```ts
+   function addMemberToAccelerator(
+     payload: IAddMemberToAcceleratorPayload,
+   ): Promise<AxiosResponse<IApiResponse<ICreatedAcceleratorMember>>> {
+     return axios_post(ROUTE_ACCELERATOR_ADD, payload);
+   }
+
+   export { addMemberToAccelerator as store_accelerator_by_root_accelerator, addMemberToAccelerator };
+   ```
+4. **End state.** When the `.js` is empty, domain folders each contain `x.api.ts` + `x.types.ts` + `index.ts` (barrel). The top-level `index.ts` re-exports all of them.
+5. **Verify each move.** Typecheck, plus grep proving BOTH the old and new name still resolve from the consumer-facing barrel import path.
+
+## Canonical pattern: dynamic-key prop readers
+
+Helpers that read arbitrary keys off a props object use exactly this shape — no variations:
+
+```ts
+import { computed } from "vue";
+import type { ComputedRef } from "vue";
+
+// props typed as `object`, not `Record<string, unknown>`:
+// typed defineProps<IProps>() objects have no index signature,
+// so Record<string, unknown> would reject them at typed call sites.
+// The two casts are the Rule 5 exception — confined here, value's
+// type is contractually tied to the defaultValue parameter.
+const computedProp = <T>(props: object, key: string, defaultValue: T): ComputedRef<T> => {
+  return computed(() => {
+    const source = props as Record<string, unknown> & { input?: Record<string, unknown> };
+    return (source[key] || source.input?.[key] || defaultValue) as T;
+  });
+};
+```
+
 ## Quick Reference
 
 | Symbol | Action |
 |---|---|
 | local var / computed / file-private function | rename to camelCase (grep proof required) |
 | camelCase prop used as kebab-case in templates | keep — Vue's free equivalence |
-| snake_case prop/emit | type as-is, ASK before renaming |
-| `defineExpose`, module exports, returned object keys | type as-is, ASK before any change |
+| snake_case prop / emit / slot | keep as-is (components); dual-export bridge (modules) |
+| `defineExpose` / returned object keys | keep as-is, ASK before any change |
+| module function signature | ASK — bridge covers renames, never signatures |
 | default values | preserve exactly in `withDefaults` |
 | unused prop/param | keep as-is, note in report |
 | latent bug | keep as-is, note in report |
@@ -86,7 +136,8 @@ const props = withDefaults(defineProps<IProps>(), {
 | "Worth normalizing snake_case while we're here" | Vue does NOT map snake_case→camelCase. Ask, always. |
 | "This restructuring fixes a latent TS error" | Type what exists. If it can't be typed as-is, ask. |
 | "The helper is untyped, I'll assert its return type" | Unchecked assertion = fake safety. Convert the leaf first. |
-| "Zero usages, so renaming the prop is harmless" | Public-surface renames are the user's call, not yours. |
+| "Zero usages, so renaming the prop is harmless" | Component props keep their names unless the user says otherwise. |
+| "I'll rename the module export, callers can update" | Never. Use the dual-export bridge — old name stays. |
 
 ## Red Flags — stop and re-check the rules
 
