@@ -1,6 +1,7 @@
 ---
-name: skill-converting-legacy-js-to-ts
+name: converting-legacy-js-to-ts
 description: JS→TS migration in Vue/Nuxt — .vue components, composables, stores, helpers. Triggers: "convert to TS", "add types", "migrate to TypeScript", any JS→TS task.
+model: haiku
 ---
 
 # Converting Legacy JS to TypeScript (Vue/Nuxt)
@@ -17,7 +18,7 @@ A conversion is a type-annotation pass, not a refactor. The converted file must 
 4. **Public surface — two regimes.**
    - **Components (`.vue`)**: props, emits, slots, and `defineExpose` keep existing names including snake_case — Vue does NOT map snake_case→camelCase. The only free equivalence is camelCase ↔ kebab-case in templates. List snake_case names in the report; rename only when the user explicitly asks.
    - **JS/TS modules**: exported functions may be renamed to camelCase via the dual-export alias bridge — `export { newCamelName as old_snake_name, newCamelName }`. Never drop the old name. Signature changes always require asking.
-5. **No new `any`.** Derive from usage; use `unknown` + narrowing when genuinely unknowable; ask when stuck. Never paper over an untyped local JS dependency with a type assertion — that is fake safety. Convert the leaf helper first. Exception: a narrow cast *inside* a converted generic helper that reads dynamic keys (where the value's type is contractually tied to a parameter, e.g. a default value) is acceptable — keep such casts confined to that helper and note them in the report.
+5. **No new `any`.** Derive from usage; use `unknown` + narrowing when genuinely unknowable; ask when stuck. Never paper over an untyped local JS dependency with a type assertion — that is fake safety. If blocked by an untyped dependency: **STOP — report it and ask the user whether to expand scope.** Do not convert any file the user has not explicitly named. Exception: a narrow cast *inside* a converted generic helper that reads dynamic keys (where the value's type is contractually tied to a parameter, e.g. a default value) is acceptable — keep such casts confined to that helper and note them in the report.
 6. **Structure stays.** A `computed` stays a `computed`. No converting reactive code to module constants, no extracting helpers, no arrow-body shorthand "cleanup", no template churn (attribute reordering, self-closing tags, removing "no-op" code or blank lines). File layout is NOT structure: when consumers import through a barrel (`index.ts`), moving a function to another file is invisible to them and is the approved way to migrate large modules (see "Migrating large JS modules").
 7. **Bugs get reported, not fixed.** Latent bugs, dead props, falsy-default traps: note them in your final report. Fixing changes behavior — out of scope.
 
@@ -25,7 +26,7 @@ A conversion is a type-annotation pass, not a refactor. The converted file must 
 
 1. **House style**: read `.ai/conventions.md` if present; otherwise match 2 already-converted files in the repo.
 2. **Map public surface** (Rule 1) + **grep all usages** (Rule 2). Record findings — you'll cite them as proof.
-3. **Dependency check**: untyped local `.js` helpers must be converted first (leaf-up). Never assert over them.
+3. **Scope is exactly one file.** Only touch the file the user explicitly named. If it depends on an untyped local `.js` helper: **STOP — report the blocker and ask the user whether to expand scope.** Never assert over untyped dependencies. Never convert a file the user did not name.
 4. **Convert mechanically**:
    - `interface IProps` + `defineProps<IProps>()` + `withDefaults()` — preserve every default exactly.
    - `interface IEmits` + `defineEmits<IEmits>()`.
@@ -108,7 +109,7 @@ const computedProp = <T>(props: object, key: string, defaultValue: T): ComputedR
 | default values | preserve exactly in `withDefaults` |
 | unused prop/param | keep as-is, note in report |
 | latent bug | keep as-is, note in report |
-| untyped local `.js` dependency | convert it first (leaf-up), never assert over it |
+| untyped local `.js` dependency | STOP — report it, ask user before expanding scope |
 
 ## Rationalizations — all of these mean STOP
 
@@ -119,7 +120,8 @@ const computedProp = <T>(props: object, key: string, defaultValue: T): ComputedR
 | "The param is unused, I'll make it optional" | Signatures are public API. Ask. |
 | "Worth normalizing snake_case while we're here" | Vue does NOT map snake_case→camelCase. Ask. |
 | "This restructuring fixes a latent TS error" | Type what exists. If it can't be typed as-is, ask. |
-| "The helper is untyped, I'll assert its return type" | Fake safety. Convert the leaf first. |
+| "The helper is untyped, I'll assert its return type" | Fake safety. Report it, ask the user. |
+| "I need to convert the dependency first" | Scope is one file. Report the blocker, ask the user. |
 | "Zero usages, renaming the prop is harmless" | Props keep their names unless the user says so. |
 | "I'll rename the export, callers can update" | Never. Use the dual-export bridge. |
 
@@ -131,3 +133,4 @@ const computedProp = <T>(props: object, key: string, defaultValue: T): ComputedR
 - `any` anywhere in the diff
 - You renamed a symbol you never grepped
 - Your report contains the word "also" followed by an improvement nobody asked for
+- You opened or edited any file other than the one the user named
